@@ -6,9 +6,7 @@
     "ws/<id>-fix-<slug>",
     "int/<slug>"
   ],
-  "integrators": [
-    "enderPeer"
-  ],
+  "integrators": ["enderPeer", "rosylina2"],
   "shared": [
     {
       "path": "docs/contracts/CHANGELOG.md",
