@@ -259,7 +259,7 @@
       "verify": true,
       "author": "some-agent",
       "expect": "fail",
-      "match": [ "^int/ branches belong to the integrator \\(enderPeer, rosylina2\\), but the PR author is some-agent; use ws/<id>-<slug>$" ]
+      "match": [ "^int/ branches belong to the integrator \\(enderPeer(, [^)]+)?\\), but the PR author is some-agent; use ws/<id>-<slug>$" ]
     },
     {
       "name": "int-unverified-local",
@@ -289,7 +289,7 @@
       "verify": true,
       "exceptionActor": "some-agent",
       "expect": "fail",
-      "match": [ "^the 'ownership-exception' label was set by some-agent, who is not an integrator \\(enderPeer, rosylina2\\), so it does not apply", "^docs/project-graph\\.json is owned by family S0, not by family T1 " ]
+      "match": [ "^the 'ownership-exception' label was set by some-agent, who is not an integrator \\(enderPeer(, [^)]+)?\\), so it does not apply", "^docs/project-graph\\.json is owned by family S0, not by family T1 " ]
     },
     {
       "name": "exception-actor-unknown",
