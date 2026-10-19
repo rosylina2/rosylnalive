@@ -3,7 +3,8 @@
     DXC regression step: the pinned DXC still compiles our bindless form the way the plan relies on.
 
 .DESCRIPTION
-    Uses only the DXC pinned in tools/bootstrap/toolchain.json (run bootstrap first) and checks:
+    Uses only the DXC pinned in tools/bootstrap/toolchain.json (run bootstrap first; on Linux, its Linux build, dxc.linux)
+    and checks:
       1. `dxc --version` prints the pinned version line.
       2. dxc-regression/bindless.hlsl compiles to validated DXIL (cs_6_6, HLSL 2021, warnings are errors).
       3. The same source compiles to SPIR-V (vulkan1.3) with exactly one descriptor variable, at set 0 binding 0,
@@ -24,7 +25,9 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $toolchain = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'toolchain.json') | ConvertFrom-Json
 if (-not $DataRoot) { $DataRoot = if ($env:LRM_DATA) { $env:LRM_DATA } else { $toolchain.dataRoot } }
 if (-not $OutDir) { $OutDir = Join-Path $repo 'artifacts/dxc-regression' }
-$dxc = Join-Path $DataRoot $toolchain.dxc.exe
+# On Linux, the Linux build of the same DXC (toolchain.json dxc.linux).
+$dxcPin = if ($IsLinux) { $toolchain.dxc.linux } else { $toolchain.dxc }
+$dxc = Join-Path $DataRoot $dxcPin.exe
 $src = Join-Path $PSScriptRoot 'dxc-regression'
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
@@ -44,7 +47,7 @@ if (-not (Test-Path -LiteralPath $dxc)) {
 Write-Host "dxc-regression: $dxc"
 
 $v = Invoke-Dxc @('--version')
-Check ($v.Code -eq 0 -and $v.Output -eq $toolchain.dxc.versionOutput) "version is '$($toolchain.dxc.versionOutput)' (got '$($v.Output)')"
+Check ($v.Code -eq 0 -and $v.Output -eq $dxcPin.versionOutput) "version is '$($dxcPin.versionOutput)' (got '$($v.Output)')"
 
 $hlsl = Join-Path $src 'bindless.hlsl'
 $dxil = Join-Path $OutDir 'bindless.dxil'

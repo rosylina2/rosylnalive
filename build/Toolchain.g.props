@@ -17,4 +17,9 @@
     <LrmTokenizerJson>$(LrmData)/models/Qwen3-0.6B/tokenizer.json</LrmTokenizerJson>
     <LrmTokenizerSha256>aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4</LrmTokenizerSha256>
   </PropertyGroup>
+  <!-- On Linux, the Linux build of the same DXC (toolchain.json dxc.linux). -->
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <LrmDxcExe>$(LrmData)/toolchain/dxc/1.9.2609.5/linux/bin/dxc</LrmDxcExe>
+    <LrmDxcVersionOutput>libdxcompiler.so: 1.9(5512-01b62ad4)(1.9.2609.5)</LrmDxcVersionOutput>
+  </PropertyGroup>
 </Project>

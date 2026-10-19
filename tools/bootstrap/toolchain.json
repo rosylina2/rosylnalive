@@ -1,6 +1,6 @@
 {
   "schema": "lrm.toolchain/1",
-  "about": "Every toolchain pin (DataRootAndToolchain contract): URL, size, hash and path under LRM_DATA. tools/bootstrap/bootstrap.ps1 verifies or installs the entries marked managedBy=bootstrap, by kind (dxc-nupkg, file, zip), and only when approval says approved. dataRoot is the one source of the default LRM_DATA (build/Toolchain.g.props, tools/test.ps1, Lrm.Testing). Nothing under LRM_DATA is ever committed.",
+  "about": "Every toolchain pin (DataRootAndToolchain contract): URL, size, hash and path under LRM_DATA. tools/bootstrap/bootstrap.ps1 verifies or installs the entries marked managedBy=bootstrap, by kind (dxc-nupkg, file, zip, tar), and only when approval says approved. dataRoot is the one source of the default LRM_DATA (build/Toolchain.g.props, tools/test.ps1, Lrm.Testing). Nothing under LRM_DATA is ever committed.",
   "dataRoot": "C:/Users/end/dev/lrm-data",
   "dxc": {
     "managedBy": "bootstrap",
@@ -31,7 +31,33 @@
     },
     "versionOutput": "dxcompiler.dll: 1.9(5512-01b62ad4)(1.9.2609.5) - 1.9.2609.5 (01b62ad47)",
     "signer": "CN=Microsoft Corporation",
-    "note": "Never use the Windows Kits dxc: it has no SPIR-V backend."
+    "note": "Never use the Windows Kits dxc: it has no SPIR-V backend.",
+    "linux": {
+      "about": "The same DXC build for Linux x64 hosts, from the release's Linux archive. On Linux, bootstrap.ps1, gen-toolchain-props.ps1 and the shader build read this object in place of the fields above, with the entry's version and approval. bin/dxc and lib/libdxcompiler.so carry the rpath $ORIGIN/../lib, so dxc loads the pinned lib/ ahead of any LD_LIBRARY_PATH. files pins the binaries as sha256 does above; sha256 here is the archive's.",
+      "kind": "tar",
+      "url": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/linux_dxc_2026_09_28.x86_x64.tar.gz",
+      "size": 13297763,
+      "sha256": "96faadc7f5c282d2ffda49804beb4c3ee38127bc252b723234e3c5cdf7aa39a1",
+      "download": "downloads/dxc-1.9.2609.5/linux_dxc_2026_09_28.x86_x64.tar.gz",
+      "install": "toolchain/dxc/1.9.2609.5/linux",
+      "exe": "toolchain/dxc/1.9.2609.5/linux/bin/dxc",
+      "extract": [
+        "LICENSE-LLVM.txt",
+        "LICENSE-MS.txt",
+        "ReleaseNotes.md",
+        "include/*",
+        "bin/*",
+        "lib/*"
+      ],
+      "files": {
+        "bin/dxc": "3dfc856b76291ffc7e45e21fd37ab80e85b34101de76a03253df6608785c92a0",
+        "bin/dxv": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3",
+        "bin/dxv-3.7": "33778294d67143d9f81526f4759c66d5a67a95ea9873448ef3595650a643cbd3",
+        "lib/libdxcompiler.so": "d40e4a7b3b46490313f4bfd08101946483a673831b3ea65c93d746de1c2f9216",
+        "lib/libdxil.so": "730b31420ea0c38f711c1eb581613bfd0797c53371a55f721838b29d10881c8c"
+      },
+      "versionOutput": "libdxcompiler.so: 1.9(5512-01b62ad4)(1.9.2609.5)"
+    }
   },
   "vkxml": {
     "managedBy": "bootstrap",

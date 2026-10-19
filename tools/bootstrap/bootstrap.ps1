@@ -16,12 +16,17 @@
                  top folder when stripTopFolder is set), which is then moved into place. The install folder records
                  the archive hash and every file's SHA-256 in .lrm-install.json, and every run verifies the files
                  against that record and against any `files` pins in toolchain.json.
+      tar        (dxc on Linux) As zip, for a gzip-compressed tar of regular files, which keep their Unix modes. When
+                 the entry names an `exe`, every run also checks its `--version` output against versionOutput.
+
+    An entry with a `linux` object (dxc) is installed from that object on a Linux host, with the entry's version and
+    approval; every other host reads the entry itself. A `linux` object that sets version or approval is refused.
 
     Approval gates every download. Only an entry whose `approval` says "approved" is installed; a pending or declined
     entry is never downloaded. A pending or declined file entry whose size and sha256 are pinned is still verified when
     a copy is already at its install path (for example the tokenizer, which came with the verified weights): a bad
     copy fails the run, and a missing one is skipped with a message. Every other unapproved entry is skipped. An
-    approved file or zip entry also needs its url, size and sha256 pinned. -ComputePins (with -AllowDownload)
+    approved file, zip or tar entry also needs its url, size and sha256 pinned. -ComputePins (with -AllowDownload)
     downloads such an entry once, prints the size and SHA-256 to pin, and installs nothing; the integrator checks them
     against the upstream release and commits them.
 
@@ -38,8 +43,8 @@
     Restrict to some entries, e.g. -Only dxc or -Only vkxml,vkheaders.
 
 .PARAMETER ComputePins
-    For approved file and zip entries whose size or sha256 is not pinned yet: download once (needs -AllowDownload),
-    print the values to pin, and install nothing.
+    For approved file, zip and tar entries whose size or sha256 is not pinned yet: download once (needs
+    -AllowDownload), print the values to pin, and install nothing.
 
 .PARAMETER ToolchainPath
     Another toolchain.json, for tools/bootstrap/test-bootstrap.ps1. Default: the one next to this script.
@@ -72,6 +77,24 @@ function Under([string]$rel) { Join-Path $DataRoot $rel }
 
 # An optional field of a toolchain entry, or $null (StrictMode forbids reading a missing property).
 function Get-Field($e, [string]$name) { if ($e.PSObject.Properties[$name]) { $e.$name } else { $null } }
+
+# The entry this host installs. An entry with a `linux` object (dxc) is that object on a Linux host, with the entry's
+# version and approval; every other host, Windows included, reads the entry itself. A `linux` object that sets its own
+# version or approval contradicts the entry and is refused, so it can never approve what the entry does not.
+function Get-HostEntry([string]$key, $e) {
+    $linux = Get-Field $e 'linux'
+    if (-not $IsLinux -or -not $linux) { return $e }
+    foreach ($k in 'version', 'approval') {
+        if ($linux.PSObject.Properties[$k]) {
+            throw "${key}: its linux object sets '$k'; the Linux build takes its version and approval from the entry"
+        }
+    }
+    $h = [ordered]@{}
+    foreach ($p in $linux.PSObject.Properties) { $h[$p.Name] = $p.Value }
+    $h.version = $e.version
+    $h.approval = Get-Field $e 'approval'
+    [pscustomobject]$h
+}
 
 function Get-Sha256([string]$path) { (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() }
 
@@ -141,6 +164,46 @@ function Expand-Pinned([string]$key, [string]$archive, [object[]]$patterns, [str
         if ($count -eq 0) { throw "${key}: no entry of $archive matches $($patterns -join ', ')" }
     }
     finally { $zip.Dispose() }
+}
+
+# Extracts the regular files of the gzip-compressed tar $archive that match $patterns into $staging (a fresh folder),
+# with their Unix modes; a leading ./ is dropped from every path. A link entry that matches fails the run, so the
+# install holds exactly the files whose hashes it records.
+function Expand-PinnedTar([string]$key, [string]$archive, [object[]]$patterns, [string]$staging) {
+    Add-Type -AssemblyName System.Formats.Tar
+    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+    $root = [IO.Path]::GetFullPath($staging) + [IO.Path]::DirectorySeparatorChar
+    $file = [IO.File]::OpenRead($archive)
+    try {
+        $gzip = [IO.Compression.GZipStream]::new($file, [IO.Compression.CompressionMode]::Decompress)
+        $tar = [Formats.Tar.TarReader]::new($gzip)
+        $count = 0
+        while ($null -ne ($entry = $tar.GetNextEntry())) {
+            $name = $entry.Name
+            if ($name.StartsWith('./')) { $name = $name.Substring(2) }
+            if ($entry.EntryType -eq [Formats.Tar.TarEntryType]::Directory) { continue }
+            if (-not ($patterns | Where-Object { $name -like $_ })) { continue }
+            if ($entry.EntryType -notin @([Formats.Tar.TarEntryType]::RegularFile, [Formats.Tar.TarEntryType]::V7RegularFile)) {
+                throw "${key}: $($entry.Name) in $archive is a $($entry.EntryType), not a regular file"
+            }
+            $target = [IO.Path]::GetFullPath((Join-Path $staging $name))
+            if (-not $target.StartsWith($root)) { throw "${key}: unsafe path in archive: $($entry.Name)" }
+            New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
+            $entry.ExtractToFile($target, $false)
+            $count++
+        }
+        if ($count -eq 0) { throw "${key}: no entry of $archive matches $($patterns -join ', ')" }
+    }
+    finally { $file.Dispose() }
+}
+
+# The exact version output of an archive-installed tool (dxc on Linux).
+function Assert-VersionOutput([string]$key, $e) {
+    $exe = Under $e.exe
+    $version = (& $exe --version 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "${key}: '$exe --version' exited $LASTEXITCODE" }
+    $want = Get-Field $e 'versionOutput'
+    if ($version -cne $want) { throw "${key}: --version printed '$version', the pin says '$want'" }
 }
 
 function Test-Sha512Pin([string]$key, $e, [string]$path) {
@@ -227,7 +290,8 @@ function Install-Zip([string]$key, $e) {
         Test-Sha256Pin $key $e $archive
         Write-Host "${key}: extracting $archive"
         $staging = "$install.staging-$PID"
-        Expand-Pinned $key $archive @($e.extract) $staging ([bool](Get-Field $e 'stripTopFolder'))
+        if ($e.kind -eq 'tar') { Expand-PinnedTar $key $archive @($e.extract) $staging }
+        else { Expand-Pinned $key $archive @($e.extract) $staging ([bool](Get-Field $e 'stripTopFolder')) }
         [string[]]$names = @(Get-ChildItem -LiteralPath $staging -Recurse -File | ForEach-Object { Get-RelativePath $staging $_.FullName })
         [Array]::Sort($names, [StringComparer]::Ordinal)
         $files = [ordered]@{}
@@ -268,12 +332,13 @@ function Install-Zip([string]$key, $e) {
             if ($have -ne $p.Value) { throw "${key}: $file has SHA-256 $have, the pin says $($p.Value)" }
         }
     }
+    if (Get-Field $e 'exe') { Assert-VersionOutput $key $e }
     Write-Host "$key $($e.version): OK  $install ($($recorded.Count) files)" -ForegroundColor Green
 }
 
 function Show-Pins([string]$key, $e) {
     $kind = Get-Field $e 'kind'
-    if ($kind -notin @('file', 'zip')) { throw "${key}: -ComputePins handles file and zip entries, not '$kind'" }
+    if ($kind -notin @('file', 'zip', 'tar')) { throw "${key}: -ComputePins handles file, zip and tar entries, not '$kind'" }
     if ((Get-Field $e 'size') -and (Get-Field $e 'sha256')) {
         Write-Host "${key}: size and sha256 are already pinned; nothing to compute"
         return
@@ -328,8 +393,8 @@ if ($Only) {
 
 $failures = 0
 foreach ($key in $keys) {
-    $e = $toolchain.$key
     try {
+        $e = Get-HostEntry $key $toolchain.$key
         if (-not (Test-Approved $e)) {
             if (-not $ComputePins -and (Test-LocalCopy $key $e)) { Confirm-LocalCopy $key $e }
             else { Skip-Unapproved $key $e }
@@ -341,7 +406,8 @@ foreach ($key in $keys) {
             'dxc-nupkg' { Install-Dxc $key $e }
             'file' { Install-File $key $e }
             'zip' { Install-Zip $key $e }
-            default { throw "${key}: unknown kind '$kind' in toolchain.json (expected dxc-nupkg, file or zip)" }
+            'tar' { Install-Zip $key $e }
+            default { throw "${key}: unknown kind '$kind' in toolchain.json (expected dxc-nupkg, file, zip or tar)" }
         }
     }
     catch {

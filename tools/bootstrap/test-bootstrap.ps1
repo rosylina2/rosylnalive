@@ -9,7 +9,11 @@
         copy fails the run, and a missing one is skipped;
       - a pending entry without pins is skipped even when a copy exists;
       - a missing approved file without -AllowDownload fails, and with it downloads again;
-      - a download that does not match its pin fails and leaves neither the file nor a .partial behind.
+      - a download that does not match its pin fails and leaves neither the file nor a .partial behind;
+      - a linux object that sets its own approval never approves its pending entry: a Linux host refuses the entry,
+        every other host reads it as the pending entry it is, and neither fetches anything;
+      - an installed tool's --version output must equal its pinned line exactly: a line that differs only in case
+        fails the run.
     Nothing leaves the machine: the server listens on 127.0.0.1 only and serves a generated payload.
 
     Exit code: 0 when every check holds, otherwise 1.
@@ -63,6 +67,23 @@ function Entry([string]$Approval, [string]$Install, $Sha256 = $sha) {
         url = "http://127.0.0.1:$port/fixture.bin"; size = $payload.Length; sha256 = $Sha256; install = $Install
     }
 }
+# A pending entry whose linux object claims an approval of its own.
+$conflict = Entry 'pending' 'models/fixture/conflict.bin'
+$conflict.linux = [ordered]@{
+    approval = 'approved (fixture)'; kind = 'file'; url = $conflict.url; size = $payload.Length; sha256 = $sha
+    install = 'toolchain/fixture/conflict-linux.bin'
+}
+# Approved zip entries already installed (folder and .lrm-install.json in place, so nothing is fetched), whose exe prints
+# 'Fixture Version 1'. One pins that line, the other the same line with one letter's case changed.
+$toolArchive = '1' * 64
+$toolExe = if ($IsWindows) { 'version.cmd' } else { 'version.sh' }
+function ToolEntry([string]$VersionOutput) {
+    [ordered]@{
+        managedBy = 'bootstrap'; kind = 'zip'; approval = 'approved (fixture)'; version = 'fixture'
+        url = "http://127.0.0.1:$port/tool.zip"; size = 1; sha256 = $toolArchive; install = 'toolchain/fixture/tool'
+        exe = "toolchain/fixture/tool/$toolExe"; versionOutput = $VersionOutput
+    }
+}
 $toolchain = [ordered]@{
     schema          = 'lrm.toolchain/1'
     dataRoot        = $data
@@ -71,6 +92,9 @@ $toolchain = [ordered]@{
     pendingMissing  = Entry 'pending' 'models/fixture/missing.bin'
     pendingUnpinned = Entry 'pending' 'models/fixture/unpinned.bin' $null
     badDownload     = Entry 'approved (fixture)' 'toolchain/fixture/bad.bin' ('0' * 64)
+    conflictLinux   = $conflict
+    versionExact    = ToolEntry 'Fixture Version 1'
+    versionCase     = ToolEntry 'Fixture version 1'
 }
 $toolchainPath = Join-Path $root 'toolchain.json'
 [IO.File]::WriteAllText($toolchainPath, ($toolchain | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
@@ -81,6 +105,15 @@ function Put([string]$Rel, [byte[]]$Bytes) {
 }
 Put 'models/fixture/local.bin' $payload
 Put 'models/fixture/unpinned.bin' ([Text.Encoding]::UTF8.GetBytes("anything`n"))
+$toolText = if ($IsWindows) { "@echo Fixture Version 1`r`n" } else { "#!/bin/sh`necho 'Fixture Version 1'`n" }
+Put "toolchain/fixture/tool/$toolExe" ([Text.Encoding]::ASCII.GetBytes($toolText))
+$toolPath = Join-Path $data "toolchain/fixture/tool/$toolExe"
+if (-not $IsWindows) { [IO.File]::SetUnixFileMode($toolPath, [IO.UnixFileMode]'UserRead, UserWrite, UserExecute') }
+$toolRecord = [ordered]@{
+    schema = 'lrm.toolchain-install/1'; entry = 'versionExact'; version = 'fixture'; url = "http://127.0.0.1:$port/tool.zip"
+    archiveSha256 = $toolArchive; files = [ordered]@{ $toolExe = (Get-FileHash -LiteralPath $toolPath -Algorithm SHA256).Hash.ToLowerInvariant() }
+}
+[IO.File]::WriteAllText((Join-Path $data 'toolchain/fixture/tool/.lrm-install.json'), ($toolRecord | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
 
 $failures = 0
 function Invoke-Bootstrap([string]$Name, [string[]]$Arguments, [int]$ExpectCode, [int]$ExpectRequests, [string[]]$Patterns) {
@@ -116,6 +149,14 @@ try {
     $left = @(Get-ChildItem -LiteralPath (Join-Path $data 'toolchain/fixture') -Filter 'bad.bin*' -ErrorAction SilentlyContinue)
     if ($left) { $failures++; Write-Host "  FAIL  the failed download left $($left.Name -join ', ')" -ForegroundColor Red }
     else { Write-Host '  ok    the failed download left neither the file nor a .partial' }
+    # Linux refuses the contradicting linux object; every other host reads the pending entry and skips it.
+    $conflictCode = if ($IsLinux) { 1 } else { 0 }
+    $conflictSays = if ($IsLinux) { "conflictLinux: its linux object sets 'approval'" } else { 'conflictLinux fixture: SKIPPED, the download awaits user approval; nothing fetched' }
+    Invoke-Bootstrap 'a linux object cannot approve what its entry does not' @('-AllowDownload', '-Only', 'conflictLinux') $conflictCode 3 @($conflictSays)
+    if (Test-Path -LiteralPath (Join-Path $data 'toolchain/fixture/conflict-linux.bin')) { $failures++; Write-Host '  FAIL  the contradicting linux object installed its file' -ForegroundColor Red }
+    else { Write-Host '  ok    the contradicting linux object installed nothing' }
+    Invoke-Bootstrap 'an installed tool whose version line equals the pin passes' @('-Only', 'versionExact') 0 3 @('versionExact fixture: OK')
+    Invoke-Bootstrap 'a version line that differs from the pin only in case fails' @('-Only', 'versionCase') 1 3 @("versionCase: --version printed 'Fixture Version 1', the pin says 'Fixture version 1'")
 }
 finally {
     $state.Stop = $true
