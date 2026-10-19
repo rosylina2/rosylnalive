@@ -1,6 +1,6 @@
 # ExecutionClass contract
 
-Owner: S1 owns the type, the id and the CPU fill rule, all in Lrm.Core. R4a owns the GPU fill rule. Status: v1, frozen at the contracts-v1 tag. Consumers: the models (M2), the cluster and serving (C1, C2), the GPU backends (D1, V1, R5), the executor (X1), run manifests (T1) and the gates (I1 to I3). Code: `src/Lrm.Core/ExecutionClass.fs`. Tests: `tests/Lrm.Core.Tests/ExecutionClassTests.fs`.
+Owner: S1 owns the type, the id and the CPU fill rule, all in Lrm.Core. R4a owns the GPU fill rule. Status: v1.1 (additive over v1, which the contracts-v1 tag froze): the CPU fill rule names the Linux x64 host, `linux-x64…`, beside Windows. Consumers: the models (M2), the cluster and serving (C1, C2), the GPU backends (D1, V1, R5), the executor (X1), run manifests (T1) and the gates (I1 to I3). Code: `src/Lrm.Core/ExecutionClass.fs`. Tests: `tests/Lrm.Core.Tests/ExecutionClassTests.fs`.
 
 An ExecutionClass names everything that can change the bits a computation produces. **Bit-identity claims hold only between runs of one class.** Across classes, results are compared with tolerances (ToleranceSpec, KernelBounds). The type lives in Lrm.Core so that Models.Qwen and Cluster can name it without referencing a GPU project.
 
@@ -63,7 +63,7 @@ Rules for using the id:
 - `DeviceId` = `cpu`.
 - `Driver` = `RuntimeInformation.FrameworkDescription`, for example `.NET 10.0.13`.
 - `ShaderSetHash` = None.
-- `Arch` = `<os>-<arch>`, then `+avx2`, `+fma` and `+avx512f` for each feature the CPU has. For example `win-x64+avx2+fma`.
+- `Arch` = `<os>-<arch>`, then `+avx2`, `+fma` and `+avx512f` for each feature the CPU has. `<os>` is `win` on Windows and `linux` on Linux, the two supported hosts, both x64. For example `win-x64+avx2+fma` or `linux-x64+avx2+fma`.
 
 The runtime version and the ISA flags are part of the class because the runtime's and the C runtime's math functions can dispatch on them, so they can change the bits of `exp`, `sin` and similar functions. Plain IEEE arithmetic is the same everywhere; the class stays conservative so that bit-identity claims are never wrong.
 
@@ -104,6 +104,6 @@ The tests in `ExecutionClassTests.fs` (cpu tier) check:
 - vectors X1 and X2, both payload and id;
 - that changing any one field changes the id;
 - the validation rules;
-- the CPU fill rule on the host.
+- the CPU fill rule on the host, whose `Arch` starts with the running OS's x64 string (`win-x64` on Windows, `linux-x64` on Linux).
 
 On the development machine the CPU class is `cpu-f32 cpu, .NET 10.0.13, win-x64+avx2+fma`.

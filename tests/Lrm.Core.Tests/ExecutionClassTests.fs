@@ -130,7 +130,8 @@ let tests =
                 let c = ExecutionClass.forCpu ExecutionBackend.CpuF32
                 Expect.equal c.DeviceId "cpu" "device"
                 Expect.stringStarts c.Driver ".NET " "driver"
-                Expect.stringStarts c.Arch "win-x64" "arch (Windows x64 is the only supported host)"
+                let hostX64 = if OperatingSystem.IsLinux() then "linux-x64" else "win-x64"
+                Expect.stringStarts c.Arch hostX64 "arch (Windows x64 and Linux x64 are the supported hosts)"
                 Expect.isNone c.ShaderSetHash "no shaders"
                 Expect.isOk (ExecutionClass.validate c) "valid"
 
