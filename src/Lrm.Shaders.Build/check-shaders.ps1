@@ -42,8 +42,10 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $toolchainPath = Join-Path $repo 'tools/bootstrap/toolchain.json'
 $toolchain = Get-Content -Raw -LiteralPath $toolchainPath | ConvertFrom-Json
 if (-not $DataRoot) { $DataRoot = if ($env:LRM_DATA) { $env:LRM_DATA } else { $toolchain.dataRoot } }
-$dxc = Join-Path $DataRoot $toolchain.dxc.exe
-$versionLine = $toolchain.dxc.versionOutput
+# On Linux, the Linux build of the same DXC (toolchain.json dxc.linux).
+$dxcPin = if ($IsLinux) { $toolchain.dxc.linux } else { $toolchain.dxc }
+$dxc = Join-Path $DataRoot $dxcPin.exe
+$versionLine = $dxcPin.versionOutput
 $config = $Configuration.ToLowerInvariant()
 $tool = Join-Path $repo "artifacts/bin/Lrm.Shaders.Build/$config/Lrm.Shaders.Build.dll"
 $built = Join-Path $repo "artifacts/obj/Lrm.Shaders/$config/shaders"

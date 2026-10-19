@@ -1,13 +1,14 @@
 # ShaderBuildAndSourceConvention contract
 
-Owner: R4. R4a wrote v1; R4b finalized the SPIR-V binding (`LRM_BUF` on SPIR-V) and added the SPIR-V inspector as v1.1, following R1's ADR (VulkanHeapRecipe, `docs/decisions/R1-heap-recipe.md`). Status: v1.1, for the contracts-v1.1 tag. It is additive for every existing kernel (no blob changed) and tightens the rules for new ones: the SPIR-V inspector, and 64-bit types in the lint. VulkanHeapRecipe v1.1 section 7 describes the argument block below, so the two texts agree for the tag. Consumers: the kernels (K1 to K3), the backends (D1, V1, R5), E1 and X1. Code: `src/Lrm.Shaders/` (`include/lrm.hlsli`, `rootsig/rootsig.hlsl`, `hlsl/**`, `Lrm.Shaders.lrm.targets`, `Shaders.fs`), `src/Lrm.Shaders.Build/` (with the inspector fixtures in `fixtures/spirv/`, and the on-device check `typed-args-spike.ps1`) and `src/Lrm.Gpu.Core/ShaderSet.fs`, `SourceConvention.fs`, `Spirv.fs` (`Spirv`, `SpirvBinding`) and `SpirvInspector.fs`. Tests: `tests/Lrm.Gpu.Core.Tests/ShaderTests.fs`, `SpirvTests.fs`; CI step `src/Lrm.Shaders.Build/check-shaders.ps1`.
+Owner: R4. R4a wrote v1; R4b finalized the SPIR-V binding (`LRM_BUF` on SPIR-V) and added the SPIR-V inspector as v1.1, following R1's ADR (VulkanHeapRecipe, `docs/decisions/R1-heap-recipe.md`). Status: v1.2, additive over v1.1 (which is for the contracts-v1.1 tag): a Linux host compiles with the Linux build of the same DXC. v1.1 is additive for every existing kernel (no blob changed) and tightens the rules for new ones: the SPIR-V inspector, and 64-bit types in the lint. VulkanHeapRecipe v1.1 section 7 describes the argument block below, so the two texts agree for the tag. Consumers: the kernels (K1 to K3), the backends (D1, V1, R5), E1 and X1. Code: `src/Lrm.Shaders/` (`include/lrm.hlsli`, `rootsig/rootsig.hlsl`, `hlsl/**`, `Lrm.Shaders.lrm.targets`, `Shaders.fs`), `src/Lrm.Shaders.Build/` (with the inspector fixtures in `fixtures/spirv/`, and the on-device check `typed-args-spike.ps1`) and `src/Lrm.Gpu.Core/ShaderSet.fs`, `SourceConvention.fs`, `Spirv.fs` (`Spirv`, `SpirvBinding`) and `SpirvInspector.fs`. Tests: `tests/Lrm.Gpu.Core.Tests/ShaderTests.fs`, `SpirvTests.fs`; CI step `src/Lrm.Shaders.Build/check-shaders.ps1`.
 
 Every kernel is written once in HLSL 2021 and compiled by **one pinned compiler** to both targets. The compiled set is embedded in `Lrm.Shaders` with a manifest, and its **ShaderSetHash** enters every GPU ExecutionClass.
 
 ## The compiler
 
 - **Only DXC 1.9.2609.5** from `LRM_DATA`, `$(LrmDxcExe)` (DataRootAndToolchain). Never the Windows Kits dxc, which has no SPIR-V backend.
-- Before compiling, the build checks the SPIR-V arguments against `SpirvBinding.spirvFlagProblems` (the binding, below), then that the file exists, that `dxc --version` prints exactly `$(LrmDxcVersionOutput)`, and that `dxc.exe`, `dxcompiler.dll`, `dxil.dll` and `dxv.exe` match their SHA-256 pins in `tools/bootstrap/toolchain.json`. **A missing or different DXC fails the build** with a pointer to `pwsh tools/bootstrap/bootstrap.ps1`.
+- **On a Linux host** (v1.2) it is the Linux build of the same release, `dxc.linux` in `toolchain.json`: `bin/dxc`, `bin/dxv` and `bin/dxv-3.7`, with `lib/libdxcompiler.so` and `lib/libdxil.so`, which dxc loads through its rpath `$ORIGIN/../lib`. Its version line is `libdxcompiler.so: 1.9(5512-01b62ad4)(1.9.2609.5)`.
+- Before compiling, the build checks the SPIR-V arguments against `SpirvBinding.spirvFlagProblems` (the binding, below), then that the file exists, that `dxc --version` prints exactly `$(LrmDxcVersionOutput)`, and that `dxc.exe`, `dxcompiler.dll`, `dxil.dll` and `dxv.exe` match their SHA-256 pins in `tools/bootstrap/toolchain.json` (on Linux, the five files above against the `files` pins of `dxc.linux`). **A missing or different DXC fails the build** with a pointer to `pwsh tools/bootstrap/bootstrap.ps1`.
 
 | Target | Arguments (recorded in the manifest and hashed) |
 | --- | --- |
@@ -35,7 +36,7 @@ The build adds `-I include`, `-Fo <blob>` and the source path, relative to `src/
 The target's inputs are the sources, the helpers, every file under `include/`, the root signature, `catalog.json`, `Kernels.g.fs`, `toolchain.json`, every assembly in the tool's folder (the tool, and `Lrm.Gpu.Core` with the lint, catalog, manifest and SPIR-V inspector code, whose implementation changes reference assemblies would otherwise hide), the DXC executable and two stamps, each rewritten only when its text changes:
 
 - `sources.stamp` lists the input files, so **adding, deleting or renaming** a source or header reruns the compile step, which then prunes the blobs of kernels that are gone (a timestamp check alone never sees a deleted file);
-- `dxc.stamp` holds the DXC path, its pinned version line, and the name and write time of every file beside `dxc.exe` (`dxc.exe`, `dxcompiler.dll`, `dxil.dll`, `dxv.exe`, the four SHA-256 pins).
+- `dxc.stamp` holds the DXC path, its pinned version line, and the name and write time of every file beside `dxc.exe` (`dxc.exe`, `dxcompiler.dll`, `dxil.dll`, `dxv.exe`, the four SHA-256 pins). On Linux it holds the name and write time of every file in the Linux build's `bin/` and `lib/` (`dxc`, `dxv`, `dxv-3.7`, `libdxcompiler.so`, `libdxil.so`, the five pinned files).
 
 Its output is the manifest. **A no-change rebuild skips the target, so dxc never starts**; pointing the build at another DXC, or replacing a DXC file in place, always reruns the compile step, which then refuses it. So an incremental build embeds the same set as a clean build of the same tree (CI checks this after editing headers and after adding and deleting a file). The outputs are embedded as resources named `lrm.shaders/<path>`: `shaders.manifest.json`, `rootsig.bin`, `dxil/<kernel>.dxil` and `spirv/<kernel>.spv`.
 
@@ -71,7 +72,7 @@ There is **one ShaderSetHash per target**, because a backend runs one target and
 5. for DXIL, `Some` SHA-256 of `rootsig.bin`; for SPIR-V, `None` (an option of 32 raw bytes);
 6. the blobs of *t*, sorted by kernel name (ordinal), as a sequence of (kernel name string, blob SHA-256 as 32 raw bytes).
 
-The GPU fill rule (GpuBackendInterface) puts the hash of the backend's target into its ExecutionClass. Missing kernels are not part of it; when K1 to K3 add kernels, both hashes change, as they should.
+The GPU fill rule (GpuBackendInterface) puts the hash of the backend's target into its ExecutionClass. Missing kernels are not part of it; when K1 to K3 add kernels, both hashes change, as they should. A set built on Linux hashes the Linux version line, so its two hashes differ from those of a Windows build of the same commit, and a GPU class on a Linux-built set is never the same class as one on a Windows-built set.
 
 ## The root signature
 
@@ -331,3 +332,4 @@ These two hashes change with every kernel K1 to K3 add; they are recorded here a
   - the typed per-kernel argument blocks stay, with the reasons above and the on-device check `typed-args-spike.ps1`. VulkanHeapRecipe v1.1 amends its section 7 to match (`int/wave1-fixes`);
   - the SPIR-V inspector (16 rules) runs in the shader build, the cpu tier and CI, with 18 DXC fixtures and 66 mutations, and emits `gpu.shader.spirv_check`, `gpu.shader.push_bytes` and `gpu.shader.workgroup_bytes`;
   - the source lint also refuses the 64-bit scalar types, and the vector and matrix forms of the 16-bit and 64-bit types.
+- **v1.2** (`int/linux-host`). Additive: a Linux host compiles with the Linux build of the same DXC (`dxc.linux`). The build, `check-shaders.ps1` and the cpu tier's shader-set test read its pins and its version line there, and `dxc.stamp` lists the files in its `bin/` and `lib/`. Windows is unchanged. A Linux-built set's ShaderSetHash values hash the Linux version line.

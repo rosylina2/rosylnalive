@@ -17,7 +17,8 @@
       - sources.stamp lists the input files, so adding, deleting or renaming a source or header reruns it (and the
         tool then prunes the blobs of kernels that are gone);
       - dxc.stamp holds the DXC path, its pinned version line, and the name and write time of every file beside
-        dxc.exe (dxc.exe, dxcompiler.dll, dxil.dll, dxv.exe), so a DXC replaced in place reruns it and meets the pins;
+        dxc.exe (dxc.exe, dxcompiler.dll, dxil.dll, dxv.exe; on Linux every file in bin/ and lib/), so a DXC replaced
+        in place reruns it and meets the pins;
       - every assembly in the tool's folder is an input (Lrm.Gpu.Core holds the lint and the manifest writer, and
         reference assemblies hide its implementation changes from Lrm.Shaders.Build's own up-to-date check).
   -->
@@ -54,6 +55,9 @@
     <ItemGroup>
       <_LrmShaderToolFile Include="$(_LrmShaderToolDir)/*.dll" />
       <_LrmDxcFile Include="$(_LrmDxcDir)/*.exe;$(_LrmDxcDir)/*.dll" />
+      <!-- The Linux build keeps its executables in bin/ (dxc, dxv, dxv-3.7) and its libraries in lib/ beside it. -->
+      <_LrmDxcFile Include="$(_LrmDxcDir)/*;$([System.IO.Path]::GetFullPath('$(_LrmDxcDir)/../lib'))/*"
+                   Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
       <_LrmDxcStampLine Include="$(LrmDxcExe)" />
       <_LrmDxcStampLine Include="$(LrmDxcVersionOutput)" />
       <_LrmDxcStampLine Include="@(_LrmDxcFile->'%(Filename)%(Extension) %(ModifiedTime)')" />

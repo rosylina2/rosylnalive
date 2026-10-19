@@ -84,7 +84,16 @@ let verifyDxc (dxc: string) (expectedVersion: string) (toolchain: string option)
     | None -> ()
     | Some path ->
         use doc = JsonDocument.Parse(File.ReadAllText path)
-        let d = doc.RootElement.GetProperty "dxc"
+        let entry = doc.RootElement.GetProperty "dxc"
+
+        // A Linux host runs the entry's Linux build (dxc.linux), which pins its binaries in files (its sha256 is the
+        // archive's).
+        let d, pins =
+            if OperatingSystem.IsLinux() then
+                entry.GetProperty "linux", "files"
+            else
+                entry, "sha256"
+
         let exeRel = d.GetProperty("exe").GetString()
         let installRel = d.GetProperty("install").GetString()
 
@@ -99,7 +108,7 @@ let verifyDxc (dxc: string) (expectedVersion: string) (toolchain: string option)
 
         let installDir = full.Substring(0, full.Length - inInstall.Length)
 
-        for p in d.GetProperty("sha256").EnumerateObject() do
+        for p in d.GetProperty(pins).EnumerateObject() do
             let file = Path.Combine(installDir, p.Name)
 
             if not (File.Exists file) then

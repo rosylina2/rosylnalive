@@ -66,10 +66,14 @@ let tests =
                 let set = Shaders.embedded ()
                 Expect.equal set.CatalogHash (ContentId.parse Kernels.CatalogHashHex) "built for this catalog"
 
-                Expect.equal
-                    set.DxcVersion
-                    "dxcompiler.dll: 1.9(5512-01b62ad4)(1.9.2609.5) - 1.9.2609.5 (01b62ad47)"
-                    "pinned DXC"
+                // On Linux, the version line of the Linux build of the same DXC (toolchain.json dxc.linux).
+                let pinned =
+                    if OperatingSystem.IsLinux() then
+                        "libdxcompiler.so: 1.9(5512-01b62ad4)(1.9.2609.5)"
+                    else
+                        "dxcompiler.dll: 1.9(5512-01b62ad4)(1.9.2609.5) - 1.9.2609.5 (01b62ad47)"
+
+                Expect.equal set.DxcVersion pinned "pinned DXC"
 
                 let present = set.Blobs |> List.map _.Kernel |> List.distinct
                 let names = Kernels.all |> Array.map _.Name |> Set.ofArray
