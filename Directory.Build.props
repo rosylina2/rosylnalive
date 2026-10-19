@@ -59,6 +59,16 @@
     <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
   </PropertyGroup>
 
+  <!--
+    The lock files carry nuget.org's content hash for FSharp.Core. The SDK also ships its own FSharp.Core nupkg in an
+    implicit restore source (sdk/<version>/FSharp/library-packs), and the Linux SDK's copy hashes differently, so a
+    locked restore that picks it up fails with NU1403. Every host restores from the feed the lock files were written
+    against.
+  -->
+  <PropertyGroup>
+    <DisableImplicitLibraryPacksFolder>true</DisableImplicitLibraryPacksFolder>
+  </PropertyGroup>
+
   <!-- The default data root, for code that resolves LRM_DATA at run time (Lrm.Testing's Env, S1's LrmPaths). -->
   <ItemGroup Condition="'$(LrmGraphName)' == 'Lrm.Core' or '$(LrmGraphName)' == 'Lrm.Testing'">
     <AssemblyMetadata Include="Lrm.DefaultDataRoot" Value="$(LrmDefaultData)" />
