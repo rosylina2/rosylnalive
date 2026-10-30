@@ -29,12 +29,20 @@ let private accepted () =
 /// A device on the first accepted adapter (high-performance order).
 let private createDevice () : ComPtr<ID3D12Device> =
     let r = accepted ()
-    use factory = DxgiApi.createFactory<IDXGIFactory6> 0u
 
-    use adapter: ComPtr<IDXGIAdapter1> =
-        factory.EnumAdapterByGpuPreference(uint32 r.Adapter.Index, DXGI_GPU_PREFERENCE.HIGH_PERFORMANCE)
+    if OperatingSystem.IsLinux() then
+        LinuxAdapters.createDevice<ID3D12Device>
+            r.Adapter.Index
+            (DeviceCheck.deviceUuid r.Adapter).Value
+            r.Adapter.Luid
+            DeviceCheck.CreationFeatureLevel
+    else
+        use factory = DxgiApi.createFactory<IDXGIFactory6> 0u
 
-    D3D12Api.createDevice<IDXGIAdapter1, ID3D12Device> adapter DeviceCheck.CreationFeatureLevel
+        use adapter: ComPtr<IDXGIAdapter1> =
+            factory.EnumAdapterByGpuPreference(uint32 r.Adapter.Index, DXGI_GPU_PREFERENCE.HIGH_PERFORMANCE)
+
+        D3D12Api.createDevice<IDXGIAdapter1, ID3D12Device> adapter DeviceCheck.CreationFeatureLevel
 
 /// A compute queue with one allocator, list and fence.
 type private Context(dev: ComPtr<ID3D12Device>) =
@@ -63,12 +71,25 @@ type private Context(dev: ComPtr<ID3D12Device>) =
         queue.Signal(fence, value)
 
         if fence.GetCompletedValue() < value then
-            fence.SetEventOnCompletion(value, event.SafeWaitHandle.DangerousGetHandle())
+            if OperatingSystem.IsLinux() then
+                let clock = Stopwatch.StartNew()
+                let timeout = TimeSpan.FromSeconds 10.0
 
-            if not (event.WaitOne(TimeSpan.FromSeconds 10.0)) then
-                failtestf
-                    "GPU work did not finish within 10 s (removed reason %s)"
-                    (HResult.describe (dev.GetDeviceRemovedReason()))
+                while fence.GetCompletedValue() < value && clock.Elapsed < timeout do
+                    Thread.Yield() |> ignore
+                    Thread.Sleep 1
+
+                if fence.GetCompletedValue() < value then
+                    failtestf
+                        "GPU work did not finish within 10 s (removed reason %s)"
+                        (HResult.describe (dev.GetDeviceRemovedReason()))
+            else
+                fence.SetEventOnCompletion(value, event.SafeWaitHandle.DangerousGetHandle())
+
+                if not (event.WaitOne(TimeSpan.FromSeconds 10.0)) then
+                    failtestf
+                        "GPU work did not finish within 10 s (removed reason %s)"
+                        (HResult.describe (dev.GetDeviceRemovedReason()))
 
         Expect.equal (dev.GetDeviceRemovedReason()) HResult.S_OK "the device is not removed"
         allocator.Reset()
@@ -162,7 +183,15 @@ let private dxc () =
     use doc =
         JsonDocument.Parse(File.ReadAllText(Path.Combine(repo, "tools", "bootstrap", "toolchain.json")))
 
-    let rel = doc.RootElement.GetProperty("dxc").GetProperty("exe").GetString()
+    let entry = doc.RootElement.GetProperty("dxc")
+
+    let pin =
+        if OperatingSystem.IsLinux() then
+            entry.GetProperty("linux")
+        else
+            entry
+
+    let rel = pin.GetProperty("exe").GetString()
     let exe = Path.Combine(Env.dataRoot (), rel)
 
     if not (File.Exists exe) then
@@ -352,24 +381,30 @@ let private leakTest () =
 
 let private failures () =
     use dev = createDevice ()
+
     Expect.equal (dev.GetDeviceRemovedReason()) HResult.S_OK "a healthy device"
-
-    // A zero-width buffer is invalid: the device itself reports the failure.
     let props = Desc.heapProperties D3D12_HEAP_TYPE.DEFAULT
-    let bad = Desc.buffer 0UL D3D12_RESOURCE_FLAGS.NONE
 
-    let e =
-        try
-            use _r: ComPtr<ID3D12Resource> =
-                dev.CreateCommittedResource(&props, D3D12_HEAP_FLAGS.NONE, &bad, D3D12_RESOURCE_STATES.COMMON, 0n)
+    // Skip only the reproduced validation gap; the resource Map failure below still runs.
+    if (accepted ()).Adapter.DriverVersion.StartsWith("vkd3d-proton 3.0.1 (", StringComparison.Ordinal) then
+        printfn
+            "SKIP: vkd3d-proton 3.0.1 zero-width validation only: CreateCommittedResource accepts a zero-width buffer instead of E_INVALIDARG (reproduced in native C)"
+    else
+        // A zero-width buffer is invalid: the device itself reports the failure.
+        let bad = Desc.buffer 0UL D3D12_RESOURCE_FLAGS.NONE
 
-            failtest "a zero-width buffer was created"
-        with :? D3D12Exception as e ->
-            e
+        let e =
+            try
+                use _r: ComPtr<ID3D12Resource> =
+                    dev.CreateCommittedResource(&props, D3D12_HEAP_FLAGS.NONE, &bad, D3D12_RESOURCE_STATES.COMMON, 0n)
 
-    Expect.equal e.Code HResult.E_INVALIDARG "E_INVALIDARG"
-    Expect.equal e.RemovedReason (Some HResult.S_OK) "the removed reason comes from the device"
-    Expect.isFalse e.DeviceLost "not lost"
+                failtest "a zero-width buffer was created"
+            with :? D3D12Exception as e ->
+                e
+
+        Expect.equal e.Code HResult.E_INVALIDARG "E_INVALIDARG"
+        Expect.equal e.RemovedReason (Some HResult.S_OK) "the removed reason comes from the device"
+        Expect.isFalse e.DeviceLost "not lost"
 
     // Mapping a default-heap buffer fails on the resource: the reason is found through ID3D12DeviceChild.
     let good = Desc.buffer 256UL D3D12_RESOURCE_FLAGS.NONE
@@ -410,7 +445,14 @@ let private retVal () =
 /// reads its DRED data, then restores the defaults.
 let private dred () =
     match D3D12Api.tryGetDebugInterface<ID3D12DeviceRemovedExtendedDataSettings1>() with
-    | ValueNone -> skiptest "ID3D12DeviceRemovedExtendedDataSettings1 is not available from this runtime"
+    | ValueNone ->
+        let reason =
+            "ID3D12DeviceRemovedExtendedDataSettings1 is not available from this runtime"
+
+        if OperatingSystem.IsLinux() then
+            printfn "SKIP: %s" reason
+
+        skiptest reason
     | ValueSome settings ->
         use settings = settings
 
@@ -461,17 +503,19 @@ let private probeRun =
                  PciDeviceId = r.Adapter.DeviceId
                  Driver = defaultArg r.Adapter.UmdVersion r.Adapter.DriverVersion
                  MemoryBytes = int64 r.Adapter.DedicatedVideoMemory
-                 Details = []
+                 Details = DeviceCheck.detailsOf r.Adapter
              }
 
          let flags =
              Lrm.Gpu.Core.ShaderSet.flagsFor Lrm.Gpu.Core.ShaderTarget.Dxil shaders
              |> String.concat " "
 
+         let klass = Lrm.Gpu.Core.GpuClass.fill info shaders
+
          let run =
              Lrm.Telemetry.RunContext.Create(
                  { Lrm.Telemetry.RunOptions.create "kernels" "D3D12 fp32 denormal probe on scale_f32 (int-0001)" with
-                     ExecutionClass = Some(Lrm.Gpu.Core.GpuClass.fill info shaders)
+                     ExecutionClass = Some klass
                      GitSha = Env.commit ()
                      Params =
                          [
@@ -749,14 +793,70 @@ let tests =
                     if x.Adapter.Description.Contains "RTX 4080" then
                         Expect.equal x.Verdict Accepted "the RTX 4080 is ACCEPTED"
 
-                use factory = DxgiApi.createFactory<IDXGIFactory6> 0u
+                if OperatingSystem.IsLinux() then
+                    use dev = createDevice ()
 
-                use adapter: ComPtr<IDXGIAdapter1> =
-                    factory.EnumAdapterByGpuPreference(uint32 r.Adapter.Index, DXGI_GPU_PREFERENCE.HIGH_PERFORMANCE)
+                    Expect.equal
+                        (dev.GetDeviceRemovedReason())
+                        HResult.S_OK
+                        "native creation succeeded on the selected adapter"
+                else
+                    use factory = DxgiApi.createFactory<IDXGIFactory6> 0u
 
-                Expect.isTrue
-                    (D3D12Api.canCreateDevice adapter DeviceCheck.CreationFeatureLevel)
-                    "D3D12CreateDevice with a null out pointer reports success"
+                    use adapter: ComPtr<IDXGIAdapter1> =
+                        factory.EnumAdapterByGpuPreference(uint32 r.Adapter.Index, DXGI_GPU_PREFERENCE.HIGH_PERFORMANCE)
+
+                    Expect.isTrue
+                        (D3D12Api.canCreateDevice adapter DeviceCheck.CreationFeatureLevel)
+                        "D3D12CreateDevice with a null out pointer reports success"
+
+            testCase "two Linux adapters retain distinct live devices and LUIDs"
+            <| fun () ->
+                if not (OperatingSystem.IsLinux()) then
+                    let reason = "native layer multi-adapter identity test requires Linux"
+                    printfn "SKIP: %s" reason
+                    skiptest reason
+
+                let adapters = discovered.Value |> List.filter (fun r -> r.Verdict = Accepted)
+
+                match adapters with
+                | first :: second :: _ ->
+                    let create r =
+                        LinuxAdapters.createDevice<ID3D12Device>
+                            r.Adapter.Index
+                            (DeviceCheck.deviceUuid r.Adapter).Value
+                            r.Adapter.Luid
+                            DeviceCheck.CreationFeatureLevel
+
+                    use one = create first
+                    use two = create second
+
+                    let luid (dev: ComPtr<ID3D12Device>) =
+                        let value = dev.GetAdapterLuid()
+                        (int64 value.HighPart <<< 32) ||| int64 value.LowPart
+
+                    Expect.notEqual one.Ptr two.Ptr "simultaneously live devices differ"
+                    Expect.equal (luid one) first.Adapter.Luid "first selected adapter"
+                    Expect.equal (luid two) second.Adapter.Luid "second selected adapter"
+                    Expect.notEqual (luid one) (luid two) "distinct physical adapter identities"
+
+                    Expect.notEqual
+                        (DeviceCheck.deviceUuid first.Adapter)
+                        (DeviceCheck.deviceUuid second.Adapter)
+                        "distinct Vulkan UUIDs"
+
+                    printfn
+                        "two live adapters: UUID %s LUID %016x; UUID %s LUID %016x; distinct device pointers and matching GetAdapterLuid"
+                        (DeviceCheck.deviceUuid first.Adapter).Value
+                        (luid one)
+                        (DeviceCheck.deviceUuid second.Adapter).Value
+                        (luid two)
+                | _ ->
+                    let reason =
+                        "two accepted adapters are required to check simultaneous native devices"
+
+                    printfn "SKIP: %s" reason
+                    skiptest reason
 
             testCase "refcounts balance: the device's last Release returns 0" leakTest
             testCase "failed calls raise D3D12Exception with the removed reason" failures
@@ -778,6 +878,10 @@ let bench =
     [
         testCase "a COM call through a cached delegate"
         <| fun () ->
+            if OperatingSystem.IsLinux() then
+                printfn "SKIP: the IDXGIFactory6 COM benchmark requires Windows DXGI"
+                skiptest "the IDXGIFactory6 COM benchmark requires Windows DXGI"
+
             use f = DxgiApi.createFactory<IDXGIFactory6> 0u
 
             let pairs (n: int) =

@@ -36,9 +36,15 @@ module Adapters =
     /// The Driver field of the GPU fill rule (GpuClass.d3d12Driver over the UMD version), or "unknown" when the
     /// adapter reported none.
     let driverOf (a: AdapterIdentity) =
-        match a.UmdVersion |> Option.bind tryParseUmd with
-        | Some umd -> GpuClass.d3d12Driver umd
-        | None -> "unknown"
+        if
+            OperatingSystem.IsLinux()
+            && a.DriverVersion.StartsWith("vkd3d-proton ", StringComparison.Ordinal)
+        then
+            a.DriverVersion
+        else
+            match a.UmdVersion |> Option.bind tryParseUmd with
+            | Some umd -> GpuClass.d3d12Driver umd
+            | None -> "unknown"
 
     let private yesNo (b: bool) = if b then "true" else "false"
 
@@ -87,7 +93,13 @@ module Adapters =
                     "shared_system_memory", Invariant.u64 a.SharedSystemMemory
                 ]
                 @ caps
+                @ DeviceCheck.detailsOf a
         }
+
+    /// The Vulkan UUID in discovery details, used for adapter selection only.
+    let deviceUuid (info: DeviceInfo) =
+        info.Details
+        |> List.tryPick (fun (key, value) -> if key = "device_uuid" then Some value else None)
 
     /// The rejections of an adapter report, with the Requirements texts for the two device requirements
     /// (GpuBackendInterface: shader model 6.6 and resource binding tier 3); a software adapter and an adapter without

@@ -675,7 +675,12 @@ let private roundTrip () : byte[] =
     let path = Path.Combine(dir, "model.safetensors")
 
     if not (File.Exists path) then
-        skiptest (sprintf "the Qwen3-0.6B weights are not at %s" path)
+        let reason = sprintf "the Qwen3-0.6B weights are not at %s" path
+
+        if OperatingSystem.IsLinux() then
+            printfn "SKIP: %s" reason
+
+        skiptest reason
 
     let expected =
         File.ReadAllLines(Path.Combine(dir, "SHA256SUMS"))

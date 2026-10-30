@@ -74,6 +74,18 @@ type AdapterReport =
 /// Device discovery and acceptance for the d3d12 backend (GpuBackendInterface: SM 6.6 and resource binding tier 3).
 [<RequireQualifiedAccess>]
 module DeviceCheck =
+    /// Linux discovery metadata for the existing DeviceInfo.Details map; Windows and synthetic records have none.
+    let detailsOf (adapter: AdapterIdentity) =
+        if OperatingSystem.IsLinux() then
+            LinuxAdapters.details adapter.Index adapter.Luid
+        else
+            []
+
+    /// UUID identifies the selected adapter, not its execution class.
+    let deviceUuid (adapter: AdapterIdentity) =
+        detailsOf adapter
+        |> List.tryPick (fun (key, value) -> if key = "device_uuid" then Some value else None)
+
     /// The lowest shader model the backend accepts: SM 6.6 (ResourceDescriptorHeap indexing).
     let RequiredShaderModel = D3D_SHADER_MODEL.SHADER_MODEL_6_6
 
@@ -281,7 +293,7 @@ module DeviceCheck =
         let mutable d = adapter.GetDesc1()
         let name = MemoryMarshal.CreateReadOnlySpan(&d.Description.e0, 128)
         let len = (let k = name.IndexOf 0us in if k < 0 then name.Length else k)
-        let chars = Array.zeroCreate<char> len
+        let chars = Array.zeroCreate len
 
         for i in 0 .. len - 1 do
             chars[i] <- char name[i]
@@ -349,7 +361,7 @@ module DeviceCheck =
 
     /// Every adapter in high-performance order with its capabilities and verdict. Each check is reported as a
     /// gpu.device.check record and each adapter's dedicated memory as a gpu.device.memory gauge.
-    let enumerate () : AdapterReport list =
+    let private enumerateWindows () : AdapterReport list =
         use span =
             Telemetry.span "gpu.device.discover" [ Attr.str TelemetryKeys.Backend "d3d12" ]
 
@@ -404,6 +416,92 @@ module DeviceCheck =
         span.Add(Attr.int "accepted" (reports |> List.filter (fun r -> r.Verdict = Accepted) |> List.length))
 
         reports
+
+    /// Discovery uses Vulkan identity and a native vkd3d-proton device on Linux, DXGI on Windows.
+    let enumerate () : AdapterReport list =
+        if not (OperatingSystem.IsLinux()) then
+            enumerateWindows ()
+        else
+            use span =
+                Telemetry.span "gpu.device.discover" [ Attr.str TelemetryKeys.Backend "d3d12" ]
+
+            let discover () =
+                LinuxAdapters.enumerate ()
+                |> List.map (fun a ->
+                    let id =
+                        {
+                            Index = a.Index
+                            Description = a.Name
+                            VendorId = a.VendorId
+                            DeviceId = a.DeviceId
+                            SubSysId = 0u
+                            Revision = 0u
+                            DedicatedVideoMemory = a.DedicatedMemory
+                            DedicatedSystemMemory = 0UL
+                            SharedSystemMemory = a.SharedMemory
+                            Luid = a.Luid
+                            Software = a.Software
+                            UmdVersion = None
+                            DriverVersion = a.Driver
+                        }
+
+                    let caps =
+                        try
+                            use dev =
+                                LinuxAdapters.createDevice<ID3D12Device> a.Index a.Uuid a.Luid CreationFeatureLevel
+
+                            Ok(capabilities dev)
+                        with
+                        | :? D3D12Exception as e -> Error e.Message
+                        | :? DllNotFoundException as e -> Error e.Message
+
+                    let report =
+                        {
+                            Adapter = id
+                            Capabilities = caps
+                            Verdict = verdict id caps
+                        }
+
+                    emit report
+                    report)
+
+
+            let reports =
+                try
+                    discover ()
+                with :? DllNotFoundException as e ->
+                    let id =
+                        {
+                            Index = -1
+                            Description = "vkd3dProton native layer unavailable"
+                            VendorId = 0u
+                            DeviceId = 0u
+                            SubSysId = 0u
+                            Revision = 0u
+                            DedicatedVideoMemory = 0UL
+                            DedicatedSystemMemory = 0UL
+                            SharedSystemMemory = 0UL
+                            Luid = 0L
+                            Software = false
+                            UmdVersion = None
+                            DriverVersion = LinuxLibrary.version ()
+                        }
+
+                    let caps = Error e.Message
+
+                    let report =
+                        {
+                            Adapter = id
+                            Capabilities = caps
+                            Verdict = verdict id caps
+                        }
+
+                    emit report
+                    [ report ]
+
+            span.Add(Attr.int "adapters" reports.Length)
+            span.Add(Attr.int "accepted" (reports |> List.filter (fun r -> r.Verdict = Accepted) |> List.length))
+            reports
 
     /// The first accepted adapter, if any (callers that need one device).
     let firstAccepted (reports: AdapterReport list) =

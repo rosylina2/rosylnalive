@@ -47,6 +47,9 @@ type internal RetiredTimers(timers: TimerResult list, dispatchAttrs: Attr list[]
 /// denormal probe and records gpu.fp32_denormals. Calls come from one thread at a time.
 [<Sealed>]
 type D3D12Backend private (info: DeviceInfo, options: DeviceOptions, ctx: DeviceContext, debugLayer: bool) =
+    static let linuxDebugNotice =
+        lazy (printfn "Linux vkd3d-proton: Windows debug layer and DRED settings are unavailable")
+
     let backend = ExecutionBackend.D3D12
     let backendAttr = Attr.str TelemetryKeys.Backend (ExecutionBackend.name backend)
     let mutable heap: D3D12Heap option = None
@@ -116,41 +119,61 @@ type D3D12Backend private (info: DeviceInfo, options: DeviceOptions, ctx: Device
         if device.Backend <> ExecutionBackend.D3D12 then
             invalidArg "device" (sprintf "%s is not a d3d12 device" (ExecutionBackend.name device.Backend))
 
-        use factory = DxgiApi.createFactory<IDXGIFactory6> 0u
+        let dev, dred, debugLayer =
+            if OperatingSystem.IsLinux() then
+                let uuid =
+                    Adapters.deviceUuid device
+                    |> Option.defaultWith (fun () -> invalidArg "device" "missing Vulkan device UUID")
 
-        use adapter: ComPtr<IDXGIAdapter1> =
-            factory.EnumAdapterByGpuPreference(uint32 device.Index, DXGI_GPU_PREFERENCE.HIGH_PERFORMANCE)
+                let luid =
+                    Adapters.luidOf device
+                    |> Option.defaultWith (fun () -> invalidArg "device" "missing adapter LUID")
 
-        let desc = adapter.GetDesc1()
+                if options.Debug then
+                    linuxDebugNotice.Force()
 
-        let luid =
-            (int64 desc.AdapterLuid.HighPart <<< 32) ||| int64 desc.AdapterLuid.LowPart
+                let dev =
+                    LinuxAdapters.createDevice<ID3D12Device> device.Index uuid luid DeviceCheck.CreationFeatureLevel
 
-        match Adapters.luidOf device with
-        | Some expected when expected <> luid ->
-            invalidOp (
-                sprintf
-                    "adapter %d is LUID %s, not the enumerated %s (%s); enumerate again"
-                    device.Index
-                    (Adapters.luidText luid)
-                    (Adapters.luidText expected)
-                    device.Name
-            )
-        | _ -> ()
+                dev, false, false
+            else
+                use factory = DxgiApi.createFactory<IDXGIFactory6> 0u
 
-        let debugLayer =
-            options.Debug
-            && devicesCreated = 0
-            && (match D3D12Api.tryGetDebugInterface<ID3D12Debug>() with
-                | ValueSome d ->
-                    use d = d
-                    d.EnableDebugLayer()
-                    true
-                | ValueNone -> false)
+                use adapter: ComPtr<IDXGIAdapter1> =
+                    factory.EnumAdapterByGpuPreference(uint32 device.Index, DXGI_GPU_PREFERENCE.HIGH_PERFORMANCE)
 
-        let dev, dred =
-            Dred.withEnabled (fun () ->
-                D3D12Api.createDevice<IDXGIAdapter1, ID3D12Device> adapter DeviceCheck.CreationFeatureLevel)
+                let desc = adapter.GetDesc1()
+
+                let luid =
+                    (int64 desc.AdapterLuid.HighPart <<< 32) ||| int64 desc.AdapterLuid.LowPart
+
+                match Adapters.luidOf device with
+                | Some expected when expected <> luid ->
+                    invalidOp (
+                        sprintf
+                            "adapter %d is LUID %s, not the enumerated %s (%s); enumerate again"
+                            device.Index
+                            (Adapters.luidText luid)
+                            (Adapters.luidText expected)
+                            device.Name
+                    )
+                | _ -> ()
+
+                let debugLayer =
+                    options.Debug
+                    && devicesCreated = 0
+                    && (match D3D12Api.tryGetDebugInterface<ID3D12Debug>() with
+                        | ValueSome d ->
+                            use d = d
+                            d.EnableDebugLayer()
+                            true
+                        | ValueNone -> false)
+
+                let dev, dred =
+                    Dred.withEnabled (fun () ->
+                        D3D12Api.createDevice<IDXGIAdapter1, ID3D12Device> adapter DeviceCheck.CreationFeatureLevel)
+
+                dev, dred, debugLayer
 
         devicesCreated <- devicesCreated + 1
 

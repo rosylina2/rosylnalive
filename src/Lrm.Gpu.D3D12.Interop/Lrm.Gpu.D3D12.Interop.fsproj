@@ -6,8 +6,13 @@
     <Compile Include="D3D12.g.fs" />
     <Compile Include="Com.fs" />
     <Compile Include="D3D12Methods.g.fs" />
+    <Compile Include="LinuxLibrary.fs" />
     <Compile Include="Native.fs" />
+    <Compile Include="LinuxAdapters.fs" />
     <Compile Include="Desc.fs" />
     <Compile Include="DeviceCheck.fs" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../../tools/bootstrap/toolchain.json" LogicalName="Lrm.D3D12.Toolchain.json" />
   </ItemGroup>
 </Project>

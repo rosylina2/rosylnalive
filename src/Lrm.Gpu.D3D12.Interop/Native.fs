@@ -35,6 +35,7 @@ module D3D12Api =
         (adapter: ComPtr<'A>)
         (minimumFeatureLevel: D3D_FEATURE_LEVEL)
         : ComPtr<'T> =
+        LinuxLibrary.ensure ()
         let mutable iid = IidOf<'T>.Value
         let mutable out = 0n
 
@@ -51,6 +52,7 @@ module D3D12Api =
 
     /// Whether D3D12CreateDevice would succeed, without creating a device (ppDevice = null returns S_FALSE).
     let canCreateDevice<'A when 'A :> IUnknown> (adapter: ComPtr<'A>) (minimumFeatureLevel: D3D_FEATURE_LEVEL) =
+        LinuxLibrary.ensure ()
         let mutable iid = Iids.ID3D12Device
 
         let hr =
@@ -61,6 +63,7 @@ module D3D12Api =
     /// D3D12GetDebugInterface for 'T (ID3D12Debug, ID3D12Debug1, ID3D12DeviceRemovedExtendedDataSettings, ...).
     /// ValueNone when the interface is unavailable, for example without the Graphics Tools optional feature.
     let tryGetDebugInterface<'T when 'T :> IUnknown> () : ComPtr<'T> voption =
+        LinuxLibrary.ensure ()
         let mutable iid = IidOf<'T>.Value
         let mutable out = 0n
 

@@ -552,6 +552,57 @@ let private adapterTests =
 
                 Expect.equal (c.Info.Details |> List.find (fun (k, _) -> k = "shader_model") |> snd) "6.8" "SM"
 
+            testCase "Linux layer classes preserve PCI identity and differ from native D3D12"
+            <| fun () ->
+                if OperatingSystem.IsLinux() then
+                    let r =
+                        report
+                            Accepted
+                            (Ok(caps D3D_SHADER_MODEL.SHADER_MODEL_6_8 D3D12_RESOURCE_BINDING_TIER.TIER_3))
+                            false
+
+                    let uuid = "321ac892-09a0-1578-b218-a2231e8f1961"
+                    let driver = "vkd3d-proton 3.0.1 (fixture) / NVIDIA 610.57.04 Vulkan 1.4.341"
+
+                    let layered =
+                        { r with
+                            Adapter =
+                                { r.Adapter with
+                                    UmdVersion = None
+                                    DriverVersion = driver
+                                }
+                        }
+
+                    let shaders = Lrm.Shaders.Shaders.embedded ()
+                    let info = Adapters.info layered
+
+                    let info =
+                        { info with
+                            Details = info.Details @ [ "device_uuid", uuid ]
+                        }
+
+                    Expect.equal (Adapters.deviceUuid info) (Some uuid) "adapter UUID accessor"
+                    let klass = GpuClass.fill info shaders
+                    Expect.equal klass.DeviceId "pci:10de:2704" "PCI model identity"
+
+                    let other =
+                        { info with
+                            Details = [ "device_uuid", "11e1c1c9-0b71-f58b-4d30-afb9ecebaf19" ]
+                        }
+
+                    Expect.isTrue
+                        (ExecutionClass.same klass (GpuClass.fill other shaders))
+                        "identical GPUs share a class"
+
+                    Expect.equal klass.Driver driver "layer and Vulkan driver identity"
+                    Expect.equal klass.Arch "linux-x64" "GPU host rule"
+                    let native = GpuClass.fill (Adapters.info r) shaders
+                    Expect.isFalse (ExecutionClass.same klass native) "no bit-identity claim crosses the layer boundary"
+                else
+                    let reason = "Linux layer execution-class metadata requires a Linux host"
+                    printfn "SKIP: %s" reason
+                    skiptest reason
+
             testCase "rejections use the Requirements texts"
             <| fun () ->
                 let r =

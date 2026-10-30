@@ -205,13 +205,25 @@ type internal DeviceContext(device: ComPtr<ID3D12Device>, dredEnabled: bool, wai
         let clock = Diagnostics.Stopwatch.StartNew()
 
         while fence.GetCompletedValue() < value do
-            fence.SetEventOnCompletion(value, event.SafeWaitHandle.DangerousGetHandle())
+            if not (OperatingSystem.IsLinux()) then
+                fence.SetEventOnCompletion(value, event.SafeWaitHandle.DangerousGetHandle())
 
             if fence.GetCompletedValue() < value then
                 let remaining = waitTimeout - clock.Elapsed
 
-                // A stale signal can wake the wait early; the loop then checks the fence again.
-                if remaining <= TimeSpan.Zero || not (event.WaitOne remaining) then
+                let timedOut =
+                    if remaining <= TimeSpan.Zero then
+                        true
+                    elif OperatingSystem.IsLinux() then
+                        // A null native event blocks without a timeout; a CLR handle is not a native event.
+                        Thread.Yield() |> ignore
+                        Thread.Sleep 1
+                        clock.Elapsed >= waitTimeout
+                    else
+                        // A stale signal can wake the wait early; the loop then checks the fence again.
+                        not (event.WaitOne remaining)
+
+                if timedOut then
                     if fence.GetCompletedValue() < value then
                         let reason = device.GetDeviceRemovedReason()
 
