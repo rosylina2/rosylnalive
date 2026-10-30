@@ -1,6 +1,6 @@
 # ExecutionClass contract
 
-Owner: S1 owns the type, the id and the CPU fill rule, all in Lrm.Core. R4a owns the GPU fill rule. Status: v1.1 (additive over v1, which the contracts-v1 tag froze): the CPU fill rule names the Linux x64 host, `linux-x64…`, beside Windows. Consumers: the models (M2), the cluster and serving (C1, C2), the GPU backends (D1, V1, R5), the executor (X1), run manifests (T1) and the gates (I1 to I3). Code: `src/Lrm.Core/ExecutionClass.fs`. Tests: `tests/Lrm.Core.Tests/ExecutionClassTests.fs`.
+Owner: S1 owns the type, the id and the CPU fill rule, all in Lrm.Core. R4a owns the GPU fill rule. Status: v1.2 (additive over v1.1): the GPU fill rule names native vkd3d-proton on the Linux x64 host as a separate class. Consumers: the models (M2), the cluster and serving (C1, C2), the GPU backends (D1, V1, R5), the executor (X1), run manifests (T1) and the gates (I1 to I3). Code: `src/Lrm.Core/ExecutionClass.fs`. Tests: `tests/Lrm.Core.Tests/ExecutionClassTests.fs`.
 
 An ExecutionClass names everything that can change the bits a computation produces. **Bit-identity claims hold only between runs of one class.** Across classes, results are compared with tolerances (ToleranceSpec, KernelBounds). The type lives in Lrm.Core so that Models.Qwen and Cluster can name it without referencing a GPU project.
 
@@ -68,6 +68,12 @@ Rules for using the id:
 The runtime version and the ISA flags are part of the class because the runtime's and the C runtime's math functions can dispatch on them, so they can change the bits of `exp`, `sin` and similar functions. Plain IEEE arithmetic is the same everywhere; the class stays conservative so that bit-identity claims are never wrong.
 
 **GPU backends (R4a).** The backends fill `DeviceId`, `Driver` and `ShaderSetHash` by R4a's rule, which is part of the GpuBackendInterface contract. `ShaderSetHash` is required, and `forCpu` refuses GPU backends.
+
+### Linux D3D12 through vkd3d-proton (v1.2)
+
+The backend remains `d3d12`. For the native Linux layer, `Driver` is `vkd3d-proton <version> (<source commit>) / <Vulkan driver name> <driver version> Vulkan <apiVersion>`, for example `vkd3d-proton 3.0.1 (3b10bd7a7ec6a7347e616cf8bea59333afec2255) / NVIDIA 610.57.04 Vulkan 1.4.341`. `DeviceId` keeps the R4a PCI model rule, `pci:<vendor>:<device>`, as on Windows. Identical GPUs with the same driver, layer and shader set share one class. The Vulkan UUID identifies the adapter in `DeviceInfo.Details` under `device_uuid`, outside the class. `Arch` keeps the GPU host rule (`linux-x64`); `ShaderSetHash` identifies the DXIL set.
+
+The native layer version and source are pinned by DataRootAndToolchain. Its visibility-only patch exports the native entry points without changing computation. A change to the layer's computation requires a distinct layer identity. These classes differ from native Windows D3D12 even on the same hardware. Bit-identity claims never cross that boundary; the Windows fill rule and all frozen vectors remain unchanged.
 
 ## Vectors
 

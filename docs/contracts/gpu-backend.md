@@ -1,6 +1,6 @@
 # GpuBackendInterface contract
 
-Owner: R4 (R4a); this contract also holds the GPU fill rule of the ExecutionClass contract. Status: v1, frozen at the contracts-v1 tag. Consumers: the D3D12 and Vulkan backends (D1, V1, R5), the CPU device (E1), the executor (X1), serving (C2), and the apps and tests that wire backends. Code: `src/Lrm.Gpu.Core/Backend.fs`, `Dispatch.fs`, `RecordingBackend.fs`, `ShaderSet.fs`. Tests: `tests/Lrm.Gpu.Core.Tests/BackendTests.fs`.
+Owner: R4 (R4a); this contract also holds the GPU fill rule of the ExecutionClass contract. Status: v1.1, additive over v1 frozen at the contracts-v1 tag: native Linux D3D12 through vkd3d-proton. Consumers: the D3D12 and Vulkan backends (D1, V1, R5), the CPU device (E1), the executor (X1), serving (C2), and the apps and tests that wire backends. Code: `src/Lrm.Gpu.Core/Backend.fs`, `Dispatch.fs`, `RecordingBackend.fs`, `ShaderSet.fs`. Tests: `tests/Lrm.Gpu.Core.Tests/BackendTests.fs`.
 
 Everything above the GPU APIs talks to a device through these interfaces, and only through them. They are small on purpose: one heap written once, one kernel set, command lists of dispatches, barriers, copies and timers, and a fence per submission. `Lrm.Gpu.Exec` never references a concrete backend; only apps and tests wire them (ProjectGraph).
 
@@ -132,6 +132,22 @@ A shader backend fills its `ExecutionClass` (type and id: ExecutionClass contrac
 | `Arch` | The host's OS and process architecture, for example `win-x64`, without CPU feature flags; for `d3d12-warp`, `ExecutionClass.hostArch ()` with its flags, because WARP rasterizes on the CPU (`GpuClass.arch`) | `win-x64` |
 
 Bit-identity claims hold only within one class (ExecutionClass contract). A driver update therefore changes the class, and gates re-baseline on the driver recorded in the run manifest (dev plan, section 8).
+
+### Linux D3D12 (v1.1)
+
+On Linux the D3D12 backend enumerates Vulkan physical devices through its own minimal interop surface and creates a native vkd3d-proton device on the selected physical device. Selection is rechecked against the UUID and the Vulkan LUID before creation; when Vulkan reports an invalid LUID, the first eight UUID bytes are read little-endian and bit 32 is set, giving a non-zero high part. The resulting LUID is recorded and checked against `GetAdapterLuid()` after creation. The UUID is carried in the existing `DeviceInfo.Details` map as `device_uuid`, available through an accessor; `AdapterIdentity` remains source-compatible. DXGI is not loaded. The same shader-model and resource-binding requirements apply, and missing optional feature queries remain absent capabilities.
+
+The layer's `Driver` follows ExecutionClass v1.2; `GpuClass.fill` supplies every class field, including the unchanged PCI model `DeviceId`. The backend records the layer and Vulkan driver in device reports. Windows debug-layer and DRED settings are unavailable on this native route and are reported as such. Linux fence waits poll `GetCompletedValue`, yielding and then sleeping one millisecond between reads, with the same deadline and timeout error as Windows (30 seconds in the backend, 10 seconds in the interop gpu tests). A CLR wait handle cannot implement a native event on Linux. The measured `SetEventOnCompletion(value, NULL)` blocking form is reserved for callers without a timeout, such as the ABI probes. Windows waits are unchanged.
+
+Dedicated video memory is the largest Vulkan DEVICE_LOCAL heap, avoiding double-counting a separate BAR heap. The layer honours independent devices unless `ENABLE_VULKAN_RENDERDOC_CAPTURE=1` forces its LUID-keyed singleton path. Its `Forcing singleton device due to RenderDoc being enabled` INFO message is unconditional inside the independent-device branch and does not establish that singleton forcing occurred. The pinned recipe keeps `enable_renderdoc` false.
+
+`VKD3D_CONFIG` and any set `VKD3D_SHADER_*` variables reach the native layer and are recorded by name and value in adapter `Details`. The gate sets none of these variables; the interop's default shader-cache path is also recorded after initialization. A missing native installation is a bootstrap notice, while device discovery reports a rejection naming the missing path and the build/bootstrap remedy. The gpu tier still fails when no adapter is accepted.
+
+Known validation differences through the layer:
+
+- vkd3d-proton 3.0.1 accepts `CreateCommittedResource` for a zero-width buffer with `S_OK`, retaining width zero and a healthy device, instead of returning `E_INVALIDARG`. This was reproduced by a standalone native C call. The interop invalid-input test preserves its Windows assertions and skips only this zero-width block when the adapter's recorded driver identifies this layer version, printing the gap and version; its DEFAULT-heap `Map` failure assertion still runs.
+
+Later validation divergences follow the same rule: record evidence and a reason naming the affected layer version, without weakening the Windows assertion or applying a behavioral patch to the layer. Kernel failures remain failures.
 
 ## Telemetry
 
