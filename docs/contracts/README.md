@@ -15,7 +15,7 @@ Status as of 2026-10-18. "v1", "v1.1" or "v1.2" means written in full and in rev
 | --- | --- | --- | --- |
 | ProjectGraph | S0 | `project-graph.md` | v1 (PR #2; hygiene enforcement in PR #9) |
 | TestTiers | S0 | `test-tiers.md` | v1 (PR #2) |
-| DataRootAndToolchain | S0 | `data-root-and-toolchain.md` | v1.1 (PR #2; tokenizer and SDK entries in PR #9; the Linux DXC and the `tar` kind in `int/linux-host`) |
+| DataRootAndToolchain | S0 | `data-root-and-toolchain.md` | v1.2 (PR #2; tokenizer and SDK entries in PR #9; Linux DXC in `int/linux-host`; native vkd3d-proton in `int/linux-d3d12`) |
 | AgentPermissions | S0 | `agent-permissions.md` | v1 (PR #2; enforcement in PR #9) |
 | OwnershipAndContractChange | S0 | `ownership-and-contract-change.md` | v1 (PR #9) |
 | LrmCore | S1 | `lrm-core.md` | v1 (PR #3) |

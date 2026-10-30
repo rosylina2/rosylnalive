@@ -103,6 +103,43 @@
     "install": "models/Qwen3-0.6B/tokenizer.json",
     "note": "Qwen3-0.6B tokenizer at the pinned model revision; the same hash as model.sha256 below. Read by Lrm.Tokenizer (M1), which checks this SHA-256 (TokenizerApi), and by the golden tools (O1)."
   },
+  "vkd3dProton": {
+    "managedBy": "manual",
+    "platform": "linux-x64",
+    "kind": "git-native",
+    "approval": "approved 2026-10-19: recursive clone and native build on sojka",
+    "version": "3.0.1",
+    "url": "https://github.com/HansKristian-Work/vkd3d-proton.git",
+    "tag": "v3.0.1",
+    "source": "/workspace/loops/rosylina/toolchain/src/vkd3d-proton-3.0.1",
+    "commit": "3b10bd7a7ec6a7347e616cf8bea59333afec2255",
+    "patch": "vkd3d-native-exports.patch",
+    "patchSha256": "5146b718933cf023a0addcb8cc7590921744f401d32e646e1961fb84f72d3a19",
+    "exports": [
+      "vkd3d_create_instance",
+      "vkd3d_instance_get_vk_instance",
+      "vkd3d_instance_decref",
+      "vkd3d_create_device"
+    ],
+    "submodules": {
+      "khronos/SPIRV-Headers": "f88a2d766840fc825af1fc065977953ba1fa4a91",
+      "khronos/Vulkan-Headers": "ad9ce1235e88dc09287e19171dfac384db8ec32c",
+      "subprojects/dxil-spirv": "62dbb07f771534c8ce924479efdc6c8fa510361d",
+      "subprojects/dxil-spirv/subprojects/dxbc-spirv": "29c93aeecd55533a357fdd7c95be5587d1c1f506",
+      "subprojects/dxil-spirv/subprojects/dxbc-spirv/submodules/spirv_headers": "c8ad050fcb29e42a2f57d9f59e97488f465c436d",
+      "subprojects/dxil-spirv/third_party/SPIRV-Cross": "4b7bcb7e5cf71015b3299088d22004bfe4e13a5e",
+      "subprojects/dxil-spirv/third_party/SPIRV-Tools": "64f5770f59db933d46b9cad6edc42b4186409ef4",
+      "subprojects/dxil-spirv/third_party/spirv-headers": "f88a2d766840fc825af1fc065977953ba1fa4a91"
+    },
+    "build": "PATH=/usr/lib/wine:/workspace/toolchains/py/bin:$PATH sh tools/bootstrap/build-vkd3d.sh <recursive-source> <prefix>",
+    "configure": "meson setup --buildtype release --wrap-mode nodownload --prefix <prefix> build.64",
+    "prefix": "/workspace/loops/rosylina/toolchain/vkd3d-proton/3.0.1",
+    "install": "toolchain/vkd3d-proton/3.0.1",
+    "installMode": "Copy or link the complete prefix into install under LRM_DATA; no system changes.",
+    "library": "lib/x86_64-linux-gnu/libvkd3d-proton-d3d12.so",
+    "coreLibrary": "lib/x86_64-linux-gnu/libvkd3d-proton-d3d12core.so",
+    "note": "Native development build. Tests and extras default to disabled. Windows uses the in-box D3D12 and DXGI libraries unchanged."
+  },
   "vulkanSdk": {
     "managedBy": "manual",
     "optional": true,

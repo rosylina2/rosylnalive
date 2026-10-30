@@ -157,6 +157,47 @@ try {
     else { Write-Host '  ok    the contradicting linux object installed nothing' }
     Invoke-Bootstrap 'an installed tool whose version line equals the pin passes' @('-Only', 'versionExact') 0 3 @('versionExact fixture: OK')
     Invoke-Bootstrap 'a version line that differs from the pin only in case fails' @('-Only', 'versionCase') 1 3 @("versionCase: --version printed 'Fixture Version 1', the pin says 'Fixture version 1'")
+    if ($IsLinux) {
+        $toolchain.vkd3dProton = [ordered]@{
+            managedBy = 'manual'; version = 'fixture'; commit = 'a' * 40
+            patchSha256 = 'd' * 64; exports = @('fixture_create')
+            submodules = [ordered]@{ 'fixture/submodule' = 'b' * 40 }
+            install = 'toolchain/fixture/native'; library = 'front.so'; coreLibrary = 'core.so'
+        }
+        [IO.File]::WriteAllText($toolchainPath, ($toolchain | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        Invoke-Bootstrap 'missing manual native layer is noticed without a download' @('-AllowDownload', '-Only', 'vkd3dProton') 0 3 @('SKIPPED, manual native layer not installed')
+        Invoke-Bootstrap 'ComputePins skips the manual layer' @('-ComputePins', '-Only', 'vkd3dProton') 0 3 @('manual source pins; nothing to compute')
+        Put 'toolchain/fixture/native/front.so' $payload
+        Put 'toolchain/fixture/native/core.so' $payload
+        $nativeRecord = [ordered]@{
+            schema = 'lrm.native-toolchain/1'; version = 'fixture'; commit = 'a' * 40
+            patchSha256 = 'd' * 64; exports = @('fixture_create')
+            submodules = [ordered]@{ 'fixture/submodule' = 'b' * 40 }
+            files = [ordered]@{ 'front.so' = $sha; 'core.so' = $sha }
+        }
+        $nativeReceipt = Join-Path $data 'toolchain/fixture/native/.lrm-native.json'
+        [IO.File]::WriteAllText($nativeReceipt, ($nativeRecord | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        Invoke-Bootstrap 'manual layer pins and library hashes pass' @('-Only', 'vkd3dProton') 0 3 @('vkd3dProton fixture .*: OK')
+        $nativeRecord.commit = 'c' * 40
+        [IO.File]::WriteAllText($nativeReceipt, ($nativeRecord | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        Invoke-Bootstrap 'wrong native source version fails' @('-Only', 'vkd3dProton') 1 3 @('does not match the pinned version and commit')
+        $nativeRecord.commit = 'a' * 40
+        $nativeRecord.submodules['fixture/submodule'] = 'c' * 40
+        [IO.File]::WriteAllText($nativeReceipt, ($nativeRecord | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        Invoke-Bootstrap 'wrong native submodule fails' @('-Only', 'vkd3dProton') 1 3 @('submodule fixture/submodule differs from its pin')
+        $nativeRecord.submodules['fixture/submodule'] = 'b' * 40
+        $nativeRecord.patchSha256 = 'e' * 64
+        [IO.File]::WriteAllText($nativeReceipt, ($nativeRecord | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        Invoke-Bootstrap 'wrong native visibility patch fails' @('-Only', 'vkd3dProton') 1 3 @('native build patch or exports differ from the pin')
+        $nativeRecord.patchSha256 = 'd' * 64
+        $nativeRecord.exports = @('different_export')
+        [IO.File]::WriteAllText($nativeReceipt, ($nativeRecord | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        Invoke-Bootstrap 'wrong native export list fails' @('-Only', 'vkd3dProton') 1 3 @('native build patch or exports differ from the pin')
+        $nativeRecord.exports = @('fixture_create')
+        [IO.File]::WriteAllText($nativeReceipt, ($nativeRecord | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        Put 'toolchain/fixture/native/core.so' ($payload + [byte[]]@(10))
+        Invoke-Bootstrap 'changed native library fails without a download' @('-AllowDownload', '-Only', 'vkd3dProton') 1 3 @('core.so differs from the recorded native build')
+    }
 }
 finally {
     $state.Stop = $true

@@ -381,7 +381,43 @@ function Skip-Unapproved([string]$key, $e) {
     Write-Host "${key} $($e.version): SKIPPED, $why; nothing fetched; $where" -ForegroundColor Yellow
 }
 
-$keys = @($toolchain.PSObject.Properties | Where-Object { $_.Value -is [pscustomobject] -and (Get-Field $_.Value 'managedBy') -eq 'bootstrap' } |
+function Confirm-NativeLayer($e) {
+    $install = Under $e.install
+    if (-not (Test-Path -LiteralPath $install)) {
+        Write-Host "vkd3dProton $($e.version): SKIPPED, manual native layer not installed at $install; CPU-only work can continue; use build-vkd3d.sh and bootstrap before the D3D12 gpu tier" -ForegroundColor Yellow
+        return
+    }
+    $receiptPath = Join-Path $install '.lrm-native.json'
+    if (-not (Test-Path -LiteralPath $receiptPath)) {
+        throw "vkd3dProton: missing manual native build at $install; use the pinned build recipe and copy its prefix"
+    }
+    $receipt = Get-Content -Raw -LiteralPath $receiptPath | ConvertFrom-Json
+    if ($receipt.patchSha256 -cne $e.patchSha256 -or (Compare-Object $receipt.exports $e.exports -CaseSensitive)) {
+        throw 'vkd3dProton: native build patch or exports differ from the pin'
+    }
+    if ($receipt.schema -cne 'lrm.native-toolchain/1' -or $receipt.version -cne $e.version -or $receipt.commit -cne $e.commit) {
+        throw 'vkd3dProton: native build receipt does not match the pinned version and commit'
+    }
+    $want = @($e.submodules.PSObject.Properties)
+    $have = @($receipt.submodules.PSObject.Properties)
+    if ($want.Count -ne $have.Count) { throw 'vkd3dProton: native build submodule count differs' }
+    foreach ($module in $want) {
+        if ((Get-Field $receipt.submodules $module.Name) -cne $module.Value) {
+            throw "vkd3dProton: submodule $($module.Name) differs from its pin"
+        }
+    }
+    foreach ($file in @($e.library, $e.coreLibrary)) {
+        $path = Join-Path $install $file
+        $expected = Get-Field $receipt.files $file
+        if (-not $expected -or -not (Test-Path -LiteralPath $path)) { throw "vkd3dProton: missing $file" }
+        if ((Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() -cne $expected) {
+            throw "vkd3dProton: $file differs from the recorded native build"
+        }
+    }
+    Write-Host "vkd3dProton $($e.version) ($($e.commit)): OK  $install" -ForegroundColor Green
+}
+
+$keys = @($toolchain.PSObject.Properties | Where-Object { $_.Value -is [pscustomobject] -and ((Get-Field $_.Value 'managedBy') -eq 'bootstrap' -or ($IsLinux -and $_.Name -eq 'vkd3dProton')) } |
         ForEach-Object Name)
 if ($Only) {
     # `pwsh -File` passes "a,b" as one string; accept both forms.
@@ -395,6 +431,11 @@ $failures = 0
 foreach ($key in $keys) {
     try {
         $e = Get-HostEntry $key $toolchain.$key
+        if ($key -eq 'vkd3dProton' -and $IsLinux) {
+            if ($ComputePins) { Write-Host 'vkd3dProton: manual source pins; nothing to compute' }
+            else { Confirm-NativeLayer $e }
+            continue
+        }
         if (-not (Test-Approved $e)) {
             if (-not $ComputePins -and (Test-LocalCopy $key $e)) { Confirm-LocalCopy $key $e }
             else { Skip-Unapproved $key $e }

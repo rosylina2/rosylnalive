@@ -1,10 +1,10 @@
 # DataRootAndToolchain contract
 
-Owner: S0 (S0a; the tokenizer and SDK entries, local-copy verification and the bootstrap self-test are S0b's). Status: v1.1 (additive over v1): an entry's `linux` object and the `tar` kind, which install the Linux build of DXC on a Linux host. Consumers: every workstream that reads toolchains, weights, goldens, run logs or locks.
+Owner: S0 (S0a; the tokenizer and SDK entries, local-copy verification and the bootstrap self-test are S0b's). Status: v1.2 (additive over v1.1): the manual native vkd3d-proton source pin and installation receipt. Consumers: every workstream that reads toolchains, weights, goldens, run logs or locks.
 
 ## Data root
 
-- **What lives there.** `LRM_DATA` holds everything large or machine-local: `toolchain/`, `downloads/`, `models/`, `golden/`, `runs/`, `locks/`, `venv-golden/` and `spikes-staging/`. Nothing under it is ever committed, and the hygiene size check forbids the usual strays (`tools/ci/hygiene.json`: weights, `vk.xml`, SDK headers, packages, binaries).
+- **What lives there.** `LRM_DATA` holds everything large or machine-local: `toolchain/`, `downloads/`, `models/`, `golden/`, `runs/`, `locks/`, `cache/`, `venv-golden/` and `spikes-staging/`. Nothing under it is ever committed, and the hygiene size check forbids the usual strays (`tools/ci/hygiene.json`: weights, `vk.xml`, SDK headers, packages, binaries).
 - **Default.** It defaults to `C:/Users/end/dev/lrm-data`. The single source of that default is `dataRoot` in `tools/bootstrap/toolchain.json`, read in four places:
   - MSBuild: `build/Toolchain.g.props` resolves `$(LrmData)` from the `LrmData` property, else `LRM_DATA`, else `$(LrmDefaultData)`, the generated copy of `dataRoot`;
   - scripts: `tools/test.ps1` and `tools/bootstrap/bootstrap.ps1` read `toolchain.json`;
@@ -32,6 +32,7 @@ On a Linux host, `$(LrmDxcExe)` and `$(LrmDxcVersionOutput)` name the Linux buil
 | `vkheaders` | bootstrap | `zip` | pending (AP-1) | `toolchain/vulkan-headers/1.4.365` |
 | `tokenizer` | bootstrap | `file` | pending for CI runners (AP-1); the local copy is verified | `models/Qwen3-0.6B/tokenizer.json` |
 | `vulkanSdk` | manual, optional | `installer` | not requested (AP-3, asked when V1 starts) | `toolchain/vulkan-sdk/1.4.363.0` |
+| `vkd3dProton` | manual, Linux x64 only | `git-native` | approved recursive clone and native build | `toolchain/vkd3d-proton/3.0.1` |
 | `goldenVenv` | manual | | | `venv-golden` |
 | `model` | manual | | | `models/Qwen3-0.6B` |
 
@@ -59,6 +60,7 @@ On a Linux host, `$(LrmDxcExe)` and `$(LrmDxcVersionOutput)` name the Linux buil
 - **Exit code.** It is 0 when every approved entry and every present pinned copy verifies. **A second run downloads nothing.**
 - **Manual entries.** Bootstrap never touches `vulkanSdk`, `goldenVenv` or `model`.
   - The SDK entry records the optional AP-3 install: LunarG SDK 1.4.363.0, copied into its install folder with no registry, PATH or system change. Its validation layers are enabled per test process, never system-wide. Its URL, command line, size and hash are confirmed and pinned when AP-3 is asked.
+- **Manual native D3D12 layer (Linux only).** `vkd3dProton` pins the repository, tag, full commit and every recursive submodule commit, the visibility-only patch SHA-256 and its four exported functions, the recipe, build prefix, install path and both shared-library paths. The Windows DLL release archive is not source. `tools/bootstrap/build-vkd3d.sh` checks the pristine source, applies the pinned patch with `git apply --check` first, removes the previous prefix and builds without downloads; `python3 -I record-vkd3d.py` (Python standard library plus git and nm, without a time-wrapper dependency) records its source identity, patch hash, export list and the SHA-256 of each installed library in `.lrm-native.json`. Copy or link the complete prefix under `LRM_DATA`. Bootstrap never clones or builds this manual entry: on Linux a missing installation prints a notice and permits CPU-only work; an existing installation must have a receipt matching the source pins and both libraries must match its hashes. Missing or modified files in an existing installation and mismatched versions fail. `-ComputePins` skips this manual entry. On first native load the interop checks receipt version, commit and patch identity; missing libraries raise `DllNotFoundException` naming the entry, path, recipe and bootstrap. Device discovery reports a missing installation as rejected, so the gpu tier's acceptance check still fails. Windows ignores this entry. The interop embeds `toolchain.json` and resolves its Linux libraries below `LrmPaths.dataRoot()`; there is no separate toolchain-path environment override. The native shader cache defaults to `LRM_DATA/cache/vkd3d-proton/<version>` (the layer's `VKD3D_SHADER_CACHE_PATH` may select a cache directory, never a library).
 - **Current state (S0b).**
   - DXC is approved (AP-1).
   - vk.xml, Vulkan-Headers and the tokenizer's CI download are pending AP-1.
